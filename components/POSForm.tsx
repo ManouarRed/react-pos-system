@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Product, SaleItem, Category, PaymentMethod, SaleItemWithFinalPrice, SizeStock } from '../types';
-import { PAYMENT_METHODS } from '../constants'; 
+import { PAYMENT_METHODS } from '../constants';
 import { productService } from '../services/productService';
 import { Input } from './common/Input';
 import { Select } from './common/Select';
@@ -250,7 +251,7 @@ export const POSForm: React.FC = () => {
                   {searchResults.map(product => (
                     <li
                       key={product.id}
-                      className={`p-3 hover:bg-indigo-50 cursor-pointer text-sm ${(product.totalStock ?? 0) === 0 ? 'text-gray-400 opacity-70 cursor-not-allowed' : 'text-gray-700'}`}
+                      className={`p-3 hover:bg-indigo-50 cursor-pointer text-sm flex items-center ${(product.totalStock ?? 0) === 0 ? 'text-gray-400 opacity-70 cursor-not-allowed' : 'text-gray-700'}`}
                       onClick={() => (product.totalStock ?? 0) > 0 && addProductToSale(product)}
                       onKeyDown={(e) => (product.totalStock ?? 0) > 0 && e.key === 'Enter' && addProductToSale(product)}
                       title={(product.totalStock ?? 0) === 0 ? `${product.title} - Out of stock` : `${product.title} by ${product.manufacturerName}`}
@@ -259,13 +260,21 @@ export const POSForm: React.FC = () => {
                       aria-selected="false" 
                       aria-disabled={(product.totalStock ?? 0) === 0}
                     >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-medium">{product.title}</p>
-                          <p className="text-xs text-gray-500">{product.code} - {product.manufacturerName || 'N/A'} - Stock: {product.totalStock ?? 0}</p>
-                          <p className="text-xs text-gray-500">Category: {product.categoryName || 'N/A'}</p>
+                      <img 
+                        src={product.image} 
+                        alt={product.title} 
+                        className="w-10 h-10 object-cover rounded-md mr-3 flex-shrink-0" 
+                        onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/40?text=No+Img')}
+                      />
+                      <div className="flex-grow">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <p className="font-medium">{product.title}</p>
+                                <p className="text-xs text-gray-500">{product.code} - {product.manufacturerName || 'N/A'}</p>
+                                <p className="text-xs text-gray-500">Category: {product.categoryName || 'N/A'} - Stock: {product.totalStock ?? 0}</p>
+                            </div>
+                            {(product.totalStock ?? 0) > 0 && <PlusIcon className="text-indigo-500 h-5 w-5 ml-2 flex-shrink-0"/> }
                         </div>
-                        {(product.totalStock ?? 0) > 0 && <PlusIcon className="text-indigo-500 h-5 w-5"/> }
                       </div>
                     </li>
                   ))}
