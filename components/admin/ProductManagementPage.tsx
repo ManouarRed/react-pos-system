@@ -10,10 +10,14 @@ import { ProductTable } from './ProductTable';
 import { PlusIcon } from '../icons/PlusIcon';
 import { UploadIcon } from '../icons/UploadIcon'; 
 import { DownloadIcon } from '../icons/DownloadIcon'; 
+import { SearchIcon } from '../icons/SearchIcon'; // Added import
 import { ProductFormModal } from './ProductFormModal';
+import { ProductBulkEditModal } from './ProductBulkEditModal'; // New
 import { FilterIcon } from '../icons/FilterIcon';
 import { SortAscIcon } from '../icons/SortAscIcon';
 import { SortDescIcon } from '../icons/SortDescIcon';
+import { TrashIcon } from '../icons/TrashIcon';
+import { PencilIcon } from '../icons/PencilIcon';
 
 const ALL_FILTER_VALUE = "ALL";
 
@@ -35,6 +39,10 @@ export const ProductManagementPage: React.FC = () => {
   
   const [categories, setCategories] = useState<Category[]>([]);
   const [manufacturers, setManufacturers] = useState<Manufacturer[]>([]);
+
+  // Bulk actions state
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState<boolean>(false);
 
   const loadProducts = useCallback(async () => {
     setIsLoading(true);
@@ -93,80 +101,92 @@ export const ProductManagementPage: React.FC = () => {
 
   const handleSaveProduct = async (formData: ProductFormData) => {
     clearMessages();
+    setIsLoading(true);
     try {
       if (editingProduct && formData.id) {
         const updatedProduct = await productService.updateProductAdmin(formData as Required<ProductFormData>); 
         if (updatedProduct) {
           setSuccessMessage("Product updated successfully!");
-           await loadProducts(); // Reload all products to reflect update
         } else {
           throw new Error("Update operation returned undefined.");
         }
       } else { 
         const newProduct = await productService.addProductAdmin(formData);
         setSuccessMessage("Product added successfully!");
-        await loadProducts(); // Reload to include new product
       }
+      await loadProducts();
       handleCloseModal();
     } catch (err) {
       console.error("Error saving product:", err);
       setError(`Failed to save product: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`);
+    } finally {
+        setIsLoading(false);
     }
   };
 
   const handleDeleteProduct = async (productId: string) => {
     clearMessages();
     if (window.confirm("Are you sure you want to delete this product? This action cannot be undone.")) {
+      setIsLoading(true);
       try {
         const success = await productService.deleteProductAdmin(productId);
         if (success) {
           setSuccessMessage("Product deleted successfully!");
-          await loadProducts(); // Reload products
+          await loadProducts(); 
         } else {
           setError("Failed to delete product. The product might not exist or an error occurred on the server.");
         }
       } catch (err) {
         console.error("Error deleting product:", err);
         setError(`Failed to delete product: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`);
+      } finally {
+          setIsLoading(false);
       }
     }
   };
 
   const handleToggleVisibility = async (product: Product) => {
     clearMessages();
+    setIsLoading(true);
     try {
       const updatedProduct = await productService.toggleProductVisibilityAdmin(product.id);
       if (updatedProduct) {
         setSuccessMessage(`Product visibility updated for "${updatedProduct.title}".`);
-        await loadProducts(); // Reload products
+        await loadProducts(); 
       } else {
         throw new Error("Toggle visibility operation returned undefined.");
       }
     } catch (err) {
       console.error("Error toggling visibility:", err);
       setError(`Failed to update product visibility: ${err instanceof Error ? err.message : "Unknown error"}.`);
+    } finally {
+        setIsLoading(false);
     }
   };
 
   const handleDuplicateProduct = async (productToDuplicate: Product) => {
     clearMessages();
     if (window.confirm(`Are you sure you want to duplicate "${productToDuplicate.title}"? A copy will be created and set to not visible.`)) {
+      setIsLoading(true);
       try {
         const duplicatedProduct = await productService.duplicateProductAdmin(productToDuplicate.id);
         if (duplicatedProduct) {
           setSuccessMessage(`Product "${productToDuplicate.title}" duplicated successfully as "${duplicatedProduct.title}". It's initially hidden.`);
-          await loadProducts(); // Reload products
+          await loadProducts(); 
         } else {
           throw new Error("Duplicate operation returned undefined.");
         }
       } catch (err) {
         console.error("Error duplicating product:", err);
         setError(`Failed to duplicate product: ${err instanceof Error ? err.message : "Unknown error"}. Please try again.`);
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
   const handleExportProducts = async () => {
+    // ... (existing export logic - no changes needed here for bulk select)
     clearMessages();
     setIsLoading(true);
     try {
@@ -208,7 +228,7 @@ export const ProductManagementPage: React.FC = () => {
   };
 
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    // ... (existing import logic - remains largely the same but will reload all products at the end)
+    // ... (existing import logic - no changes needed here for bulk select)
     clearMessages();
     const file = event.target.files?.[0];
     if (!file) return;
@@ -318,7 +338,7 @@ export const ProductManagementPage: React.FC = () => {
           }
         }
 
-        await loadProducts(); 
+        
 
         let summaryMessage = "";
         if (importedCount > 0) summaryMessage += `${importedCount} products imported. `;
@@ -337,6 +357,7 @@ export const ProductManagementPage: React.FC = () => {
       } finally {
         setIsLoading(false);
         if(fileInputRef.current) fileInputRef.current.value = ""; 
+        await loadProducts();
       }
     };
     reader.readAsArrayBuffer(file);
@@ -344,8 +365,6 @@ export const ProductManagementPage: React.FC = () => {
 
   const filteredAndSortedProducts = useMemo(() => {
     let processedProducts = [...products];
-
-    // Filter by search term
     if (searchTerm) {
       const lowerSearchTerm = searchTerm.toLowerCase();
       processedProducts = processedProducts.filter(p =>
@@ -353,39 +372,26 @@ export const ProductManagementPage: React.FC = () => {
         p.code.toLowerCase().includes(lowerSearchTerm)
       );
     }
-
-    // Filter by category
     if (filterCategoryId !== ALL_FILTER_VALUE) {
       processedProducts = processedProducts.filter(p => p.categoryId === filterCategoryId);
     }
-
-    // Filter by manufacturer
     if (filterManufacturerId !== ALL_FILTER_VALUE) {
       processedProducts = processedProducts.filter(p => p.manufacturerId === filterManufacturerId);
     }
-    
-    // Apply sorting
     if (sortConfig !== null) {
       processedProducts.sort((a, b) => {
         let valA = a[sortConfig.key as keyof Product];
         let valB = b[sortConfig.key as keyof Product];
-
         if (sortConfig.key === 'totalStock') {
           valA = a.totalStock ?? 0;
           valB = b.totalStock ?? 0;
         }
-        
         if (typeof valA === 'string' && typeof valB === 'string') {
           valA = valA.toLowerCase();
           valB = valB.toLowerCase();
         }
-
-        if (valA < valB) {
-          return sortConfig.direction === 'ascending' ? -1 : 1;
-        }
-        if (valA > valB) {
-          return sortConfig.direction === 'ascending' ? 1 : -1;
-        }
+        if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
+        if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
         return 0;
       });
     }
@@ -418,10 +424,111 @@ export const ProductManagementPage: React.FC = () => {
   const categoryOptions = [{ value: ALL_FILTER_VALUE, label: 'All Categories' }, ...categories.map(c => ({ value: c.id, label: c.name }))];
   const manufacturerOptions = [{ value: ALL_FILTER_VALUE, label: 'All Manufacturers' }, ...manufacturers.map(m => ({ value: m.id, label: m.name }))];
 
+  // Bulk Actions Handlers
+  const handleSelectProduct = (productId: string, isSelected: boolean) => {
+    setSelectedProductIds(prev =>
+      isSelected ? [...prev, productId] : prev.filter(id => id !== productId)
+    );
+  };
 
-  if (isLoading && !products.length && !categories.length && !manufacturers.length) { 
-    return <p className="text-center text-gray-500 py-8">Loading product management...</p>;
-  }
+  const handleSelectAllProducts = (isSelected: boolean) => {
+    setSelectedProductIds(isSelected ? filteredAndSortedProducts.map(p => p.id) : []);
+  };
+
+  const handleBulkDeleteSelected = async () => {
+    clearMessages();
+    if (selectedProductIds.length === 0) {
+      setError("No products selected for deletion.");
+      return;
+    }
+    if (window.confirm(`Are you sure you want to delete ${selectedProductIds.length} selected product(s)? This action cannot be undone.`)) {
+      setIsLoading(true);
+      let successCount = 0;
+      let errorCount = 0;
+      for (const productId of selectedProductIds) {
+        try {
+          const success = await productService.deleteProductAdmin(productId);
+          if (success) successCount++;
+          else errorCount++;
+        } catch (err) {
+          console.error(`Error deleting product ${productId}:`, err);
+          errorCount++;
+        }
+      }
+      await loadProducts(); 
+      setSelectedProductIds([]);
+      let message = "";
+      if (successCount > 0) message += `${successCount} product(s) deleted successfully. `;
+      if (errorCount > 0) message += `${errorCount} product(s) failed to delete.`;
+      
+      if(errorCount > 0) setError(message || "Some products could not be deleted.");
+      else setSuccessMessage(message || "Bulk deletion processed.");
+      setIsLoading(false);
+    }
+  };
+
+  const handleOpenBulkEditModal = () => {
+    clearMessages();
+    if (selectedProductIds.length === 0) {
+      setError("No products selected for bulk editing.");
+      return;
+    }
+    setIsBulkEditModalOpen(true);
+  };
+
+  const handleCloseBulkEditModal = () => {
+    setIsBulkEditModalOpen(false);
+  };
+
+  const handleBulkEditSave = async (updates: {
+    categoryId?: string;
+    manufacturerId?: string;
+    isVisible?: boolean;
+  }) => {
+    clearMessages();
+    setIsLoading(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const productId of selectedProductIds) {
+      try {
+        const productToUpdate = products.find(p => p.id === productId);
+        if (productToUpdate) {
+          // Construct ProductFormData carefully
+          const formData: ProductFormData = {
+            id: productToUpdate.id,
+            title: productToUpdate.title,
+            code: productToUpdate.code,
+            price: productToUpdate.price,
+            image: productToUpdate.image,
+            sizes: JSON.stringify(productToUpdate.sizes), // Keep existing sizes as JSON string
+            categoryId: updates.categoryId !== undefined ? updates.categoryId : productToUpdate.categoryId,
+            manufacturerId: updates.manufacturerId !== undefined ? updates.manufacturerId : productToUpdate.manufacturerId,
+            isVisible: updates.isVisible !== undefined ? updates.isVisible : productToUpdate.isVisible,
+          };
+          const updated = await productService.updateProductAdmin(formData);
+          if (updated) successCount++;
+          else errorCount++;
+        } else {
+          errorCount++;
+        }
+      } catch (err) {
+        console.error(`Error bulk editing product ${productId}:`, err);
+        errorCount++;
+      }
+    }
+    await loadProducts();
+    setSelectedProductIds([]);
+    setIsBulkEditModalOpen(false);
+    
+    let message = "";
+    if (successCount > 0) message += `${successCount} product(s) updated successfully. `;
+    if (errorCount > 0) message += `${errorCount} product(s) failed to update.`;
+
+    if(errorCount > 0) setError(message || "Some products could not be updated.");
+    else setSuccessMessage(message || "Bulk edit processed.");
+    setIsLoading(false);
+  };
 
   const MessageDisplay = () => {
     if (error) return <p className="text-center text-red-500 py-4 bg-red-50 rounded-md my-4 whitespace-pre-wrap">{error}</p>;
@@ -441,6 +548,22 @@ export const ProductManagementPage: React.FC = () => {
           <Button onClick={handleOpenAddModal} variant="primary" leftIcon={<PlusIcon />} disabled={isLoading}>Add New Product</Button>
         </div>
       </div>
+      
+      {selectedProductIds.length > 0 && (
+        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-md shadow-sm flex flex-col sm:flex-row justify-between items-center gap-3">
+          <p className="text-sm font-medium text-indigo-700">
+            {selectedProductIds.length} product(s) selected.
+          </p>
+          <div className="flex space-x-2">
+            <Button onClick={handleOpenBulkEditModal} variant="secondary" size="sm" leftIcon={<PencilIcon className="w-4 h-4"/>} disabled={isLoading}>
+              Bulk Edit
+            </Button>
+            <Button onClick={handleBulkDeleteSelected} variant="danger" size="sm" leftIcon={<TrashIcon className="w-4 h-4"/>} disabled={isLoading}>
+              Delete Selected
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Filters and Sort Section */}
       <div className="p-4 bg-gray-50 rounded-lg shadow-sm border border-gray-200">
@@ -452,6 +575,7 @@ export const ProductManagementPage: React.FC = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             containerClassName="w-full"
+            leftIcon={<SearchIcon className="w-4 h-4 text-gray-400"/>}
           />
           <Select
             label="Filter by Category"
@@ -498,6 +622,9 @@ export const ProductManagementPage: React.FC = () => {
       
       <ProductTable
         products={filteredAndSortedProducts}
+        selectedProductIds={selectedProductIds}
+        onSelectProduct={handleSelectProduct}
+        onSelectAllProducts={handleSelectAllProducts}
         onEdit={handleOpenEditModal}
         onDelete={handleDeleteProduct}
         onToggleVisibility={handleToggleVisibility}
@@ -511,6 +638,16 @@ export const ProductManagementPage: React.FC = () => {
           onSave={handleSaveProduct}
           product={editingProduct}
           key={editingProduct ? editingProduct.id : 'new-product-modal'} 
+        />
+      )}
+       {isBulkEditModalOpen && (
+        <ProductBulkEditModal
+          isOpen={isBulkEditModalOpen}
+          onClose={handleCloseBulkEditModal}
+          onSave={handleBulkEditSave}
+          categories={categories}
+          manufacturers={manufacturers}
+          productsCount={selectedProductIds.length}
         />
       )}
     </div>
