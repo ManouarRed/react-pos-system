@@ -4,51 +4,34 @@ import { Product, SizeStock } from '../../types';
 import { productService } from '../../services/productService';
 import { Input } from '../common/Input';
 import { Button } from '../common/Button';
-import { SearchIcon } from '../icons/SearchIcon'; // Assuming SearchIcon exists
+import { SearchIcon } from '../icons/SearchIcon';
+import { PencilIcon } from '../icons/PencilIcon';
+import { InventoryStockEditModal } from './InventoryStockEditModal';
 
 const LOW_STOCK_THRESHOLD = 10;
-
-interface StockUpdateStateEntry {
-  currentStockInput: string;
-  isUpdating: boolean;
-  error?: string;
-  originalStock: number;
-}
-interface StockUpdateStates {
-  [productSizeKey: string]: StockUpdateStateEntry; // Key: "productId-sizeName"
-}
 
 export const InventoryOverviewPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [stockUpdateStates, setStockUpdateStates] = useState<StockUpdateStates>({});
   const [searchTermInventory, setSearchTermInventory] = useState<string>('');
 
+  const [isStockEditModalOpen, setIsStockEditModalOpen] = useState<boolean>(false);
+  const [productForStockEdit, setProductForStockEdit] = useState<Product | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const initializeStockUpdateStates = (loadedProducts: Product[]) => {
-    const initialStates: StockUpdateStates = {};
-    loadedProducts.forEach(product => {
-      product.sizes.forEach(size => {
-        const key = `${product.id}-${size.size}`;
-        initialStates[key] = {
-          currentStockInput: String(size.stock),
-          isUpdating: false,
-          error: undefined,
-          originalStock: size.stock,
-        };
-      });
-    });
-    setStockUpdateStates(initialStates);
-  };
+
+  const clearMessages = () => {
+    setError(null);
+    setSuccessMessage(null);
+  }
 
   const loadProducts = useCallback(async () => {
     setIsLoading(true);
-    setError(null);
+    clearMessages();
     try {
       const adminProducts = await productService.fetchAllProductsAdmin();
       setProducts(adminProducts);
-      initializeStockUpdateStates(adminProducts);
     } catch (err) {
       setError('Failed to load product inventory.');
       console.error(err);
@@ -60,71 +43,6 @@ export const InventoryOverviewPage: React.FC = () => {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
-
-  const handleStockInputChange = (productId: string, sizeName: string, value: string) => {
-    const key = `${productId}-${sizeName}`;
-    setStockUpdateStates(prev => ({
-      ...prev,
-      [key]: {
-        ...(prev[key] || { originalStock: 0, isUpdating: false }), 
-        currentStockInput: value,
-        error: undefined, 
-      }
-    }));
-  };
-
-  const handleUpdateStock = async (productId: string, sizeName: string) => {
-    const key = `${productId}-${sizeName}`;
-    const state = stockUpdateStates[key];
-    if (!state) return;
-
-    const newStock = parseInt(state.currentStockInput, 10);
-
-    if (isNaN(newStock) || newStock < 0) {
-      setStockUpdateStates(prev => ({
-        ...prev,
-        [key]: { ...prev[key], error: "Stock must be a non-negative number." }
-      }));
-      return;
-    }
-
-    setStockUpdateStates(prev => ({
-      ...prev,
-      [key]: { ...prev[key], isUpdating: true, error: undefined }
-    }));
-
-    try {
-      const updatedProduct = await productService.updateProductStockAdmin(productId, sizeName, newStock);
-      if (updatedProduct) {
-        setProducts(prevProds => prevProds.map(p => p.id === productId ? updatedProduct : p));
-        const updatedSizeInfo = updatedProduct.sizes.find(s => s.size === sizeName);
-        const currentNewStock = updatedSizeInfo ? updatedSizeInfo.stock : 0;
-
-        setStockUpdateStates(prev => ({
-          ...prev,
-          [key]: {
-            ...prev[key],
-            isUpdating: false,
-            currentStockInput: String(currentNewStock), 
-            originalStock: currentNewStock,
-          }
-        }));
-      } else {
-        throw new Error("Product or size not found, or update failed on the server.");
-      }
-    } catch (err) {
-      console.error(`Error updating stock for ${productId}, size ${sizeName}:`, err);
-      setStockUpdateStates(prev => ({
-        ...prev,
-        [key]: {
-          ...prev[key],
-          isUpdating: false,
-          error: "Failed to update stock. Please try again.",
-          currentStockInput: String(prev[key]?.originalStock ?? 0), 
-        }
-      }));
-    }
-  };
   
   const filteredInventoryProducts = useMemo(() => {
     if (!searchTermInventory) {
@@ -138,7 +56,7 @@ export const InventoryOverviewPage: React.FC = () => {
   }, [products, searchTermInventory]);
 
   const inventorySummary = useMemo(() => {
-    const currentProductList = filteredInventoryProducts; // Use filtered list for summary
+    const currentProductList = filteredInventoryProducts;
     const totalProducts = currentProductList.length;
     const totalItemsInStock = currentProductList.reduce((sum, product) => sum + (product.totalStock ?? 0), 0);
     const outOfStockCount = currentProductList.filter(p => (p.totalStock ?? 0) === 0).length;
@@ -146,22 +64,81 @@ export const InventoryOverviewPage: React.FC = () => {
     return { totalProducts, totalItemsInStock, outOfStockCount, lowStockCount };
   }, [filteredInventoryProducts]);
 
-  const getStockLevelClass = (stock: number): string => {
-    if (stock === 0) return 'text-red-600 font-semibold';
-    if (stock <= LOW_STOCK_THRESHOLD) return 'text-orange-600 font-semibold';
+  const getStockLevelClass = (totalStock: number): string => {
+    if (totalStock === 0) return 'text-red-600 font-semibold';
+    if (totalStock <= LOW_STOCK_THRESHOLD) return 'text-orange-600 font-semibold';
     return 'text-green-600';
   };
 
-  if (isLoading) {
+  const handleOpenStockEditModal = (product: Product) => {
+    clearMessages();
+    setProductForStockEdit(product);
+    setIsStockEditModalOpen(true);
+  };
+
+  const handleCloseStockEditModal = () => {
+    setProductForStockEdit(null);
+    setIsStockEditModalOpen(false);
+  };
+
+  const handleSaveStockChangesFromModal = async (productId: string, updatedSizeStocks: SizeStock[]) => {
+    clearMessages();
+    setIsLoading(true);
+    let successCount = 0;
+    let errorCount = 0;
+    const originalProduct = products.find(p => p.id === productId);
+    if (!originalProduct) {
+        setError("Original product not found for stock update.");
+        setIsLoading(false);
+        return;
+    }
+
+    for (const updatedSize of updatedSizeStocks) {
+        const originalSize = originalProduct.sizes.find(s => s.size === updatedSize.size);
+        if (originalSize && originalSize.stock !== updatedSize.stock) {
+            try {
+                const result = await productService.updateProductStockAdmin(productId, updatedSize.size, updatedSize.stock);
+                if (result) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            } catch (err) {
+                console.error(`Error updating stock for ${productId}, size ${updatedSize.size}:`, err);
+                errorCount++;
+            }
+        } else if (!originalSize && updatedSize.stock > 0) {
+            console.warn(`Attempted to update stock for a new size "${updatedSize.size}" for product ${productId}. This is not currently supported by direct modal editing.`);
+        }
+    }
+    
+    await loadProducts(); 
+    handleCloseStockEditModal();
+
+    if (successCount > 0 && errorCount === 0) {
+        setSuccessMessage("Stock updated successfully for selected sizes.");
+    } else if (errorCount > 0) {
+        setError(`Stock update failed for ${errorCount} size(s). ${successCount > 0 ? `${successCount} size(s) updated.` : ''}`);
+    } else {
+        setSuccessMessage("No stock changes were made."); 
+    }
+    setIsLoading(false);
+  };
+
+
+  if (isLoading && products.length === 0) {
     return <p className="text-center text-gray-500 py-8">Loading inventory data...</p>;
   }
 
-  if (error) {
-    return <p className="text-center text-red-500 py-8 bg-red-50 rounded-md">{error}</p>;
+  const MessageDisplay = () => {
+    if (error) return <p className="text-center text-red-500 py-4 bg-red-50 rounded-md my-4">{error}</p>;
+    if (successMessage) return <p className="text-center text-green-500 py-4 bg-green-50 rounded-md my-4">{successMessage}</p>;
+    return null;
   }
 
   return (
     <div className="space-y-6">
+      <MessageDisplay />
       <h2 className="text-2xl font-semibold text-gray-800">Inventory Overview</h2>
 
       <div className="p-4 bg-gray-50 rounded-lg shadow-sm border border-gray-200">
@@ -206,6 +183,8 @@ export const InventoryOverviewPage: React.FC = () => {
         </div>
       </div>
 
+      {isLoading && products.length > 0 && <p className="text-center text-gray-500 py-4">Updating inventory list...</p>}
+
       {filteredInventoryProducts.length === 0 ? (
         <p className="text-center text-gray-500 py-8 border-2 border-dashed border-gray-300 rounded-md">
           {searchTermInventory ? `No products found for "${searchTermInventory}".` : "No products found in the inventory."}
@@ -220,63 +199,35 @@ export const InventoryOverviewPage: React.FC = () => {
                     <tr>
                       <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">Product Title</th>
                       <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Code</th>
-                      <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Size</th>
-                      <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900 min-w-[180px]">Current Stock</th>
+                      <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Category</th>
+                      <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Manufacturer</th>
+                      <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Total Stock</th>
+                      <th scope="col" className="px-3 py-3.5 text-center text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 bg-white">
                     {filteredInventoryProducts.map((product) => (
-                      product.sizes.length > 0 ? product.sizes.map((size, index) => {
-                        const key = `${product.id}-${size.size}`;
-                        const state = stockUpdateStates[key] || { currentStockInput: String(size.stock), originalStock: size.stock, isUpdating: false };
-                        return (
-                          <tr key={key} className="hover:bg-gray-50 transition-colors duration-150">
-                            {index === 0 && ( 
-                              <>
-                                <td rowSpan={product.sizes.length} className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6 align-top border-b">{product.title}</td>
-                                <td rowSpan={product.sizes.length} className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 align-top border-b">{product.code}</td>
-                              </>
-                            )}
-                            <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{size.size}</td>
-                            <td className="whitespace-nowrap px-3 py-4 text-sm">
-                              <div className="flex items-center space-x-2">
-                                <Input
-                                  type="number"
-                                  id={`stock-${key}`}
-                                  name={`stock-${key}`}
-                                  value={state.currentStockInput}
-                                  onChange={(e) => handleStockInputChange(product.id, size.size, e.target.value)}
-                                  min="0"
-                                  className={`w-20 text-sm text-center ${getStockLevelClass(parseInt(state.currentStockInput, 10))}`}
-                                  aria-label={`Stock for ${product.title} size ${size.size}`}
-                                  disabled={state.isUpdating}
-                                />
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleUpdateStock(product.id, size.size)}
-                                  disabled={
-                                    state.isUpdating ||
-                                    parseInt(state.currentStockInput, 10) === state.originalStock
-                                  }
-                                  variant={parseInt(state.currentStockInput, 10) === state.originalStock ? "secondary" : "primary"}
-                                >
-                                  {state.isUpdating ? 'Saving...' : 'Update'}
-                                </Button>
-                              </div>
-                              {state.error && (
-                                <p className="text-xs text-red-500 mt-1">{state.error}</p>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      }) : (
-                        <tr key={product.id} className="hover:bg-gray-50 transition-colors duration-150">
-                           <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">{product.title}</td>
-                           <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{product.code}</td>
-                           <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 italic">No sizes defined</td>
-                           <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 italic">N/A</td>
-                        </tr>
-                      )
+                      <tr key={product.id} className="hover:bg-gray-50 transition-colors duration-150">
+                        <td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">{product.title}</td>
+                        <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{product.code}</td>
+                        <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{product.categoryName}</td>
+                        <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{product.manufacturerName}</td>
+                        <td className={`whitespace-nowrap px-3 py-4 text-sm ${getStockLevelClass(product.totalStock ?? 0)}`}>
+                          {product.totalStock ?? 0}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-4 text-sm text-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleOpenStockEditModal(product)}
+                            leftIcon={<PencilIcon className="w-4 h-4" />}
+                            disabled={product.sizes.length === 0} // Disable if no sizes are defined to edit
+                            title={product.sizes.length === 0 ? "No sizes defined for this product" : "Edit stock for all sizes"}
+                          >
+                            Edit Stock
+                          </Button>
+                        </td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
@@ -284,6 +235,14 @@ export const InventoryOverviewPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {isStockEditModalOpen && productForStockEdit && (
+        <InventoryStockEditModal
+          isOpen={isStockEditModalOpen}
+          onClose={handleCloseStockEditModal}
+          onSave={handleSaveStockChangesFromModal}
+          product={productForStockEdit}
+        />
       )}
     </div>
   );
